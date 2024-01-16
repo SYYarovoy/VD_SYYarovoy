@@ -1,0 +1,178 @@
+---
+title: "HW2_VD_SYYarovoy"
+author: "SYYarovoy"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(plotly)
+library(rstatix)
+library(corrplot)
+library(GGally)
+library(factoextra)
+library(pheatmap)
+library(FactoMineR)
+library(ggbiplot)
+library(tidymodels)
+library(embed)
+library(ggpubr)
+library(RColorBrewer)
+library(psych)
+```
+
+# 1. Загрузите датасет life_expectancy_data.RDS (лежит в папке домашнего задания). Это данные с основными показателями, через которые высчитывается ожидаемая продолжительности жизни по метрике World Development Indicator на уровне стран. В данных оставлены строки, относящиеся к положению женщин в 2019 г.
+```{r}
+data <- read_rds("life_expectancy_data.RDS")
+summary(data)
+str(data)
+```
+
+# 2. Сделайте интерактивный plotly график любых двух нумерических колонок. Раскрасть по колонке континента, на котором расположена страна
+```{r, message = FALSE}
+plot_ly(
+  data = data,
+  x = ~ `Life expectancy`,
+  y = ~ `Unemployment`,
+  color = ~ continent) %>%
+    layout(
+    title = 'Отношение уровня ожидаемой продолжительности жизни к уровню безработицы',
+    yaxis = list(title = 'Продолжительность жизни',
+                 zeroline = FALSE),
+    xaxis = list(title = 'Уровень безработицы',
+                 zeroline = FALSE))
+
+```
+
+# 3. Проведите тест, на сравнение распределений колонки Life expectancy между группами стран Африки и Америки. Вид статистического теста определите самостоятельно. Визуализируйте результат через библиотеку rstatix.
+```{r, message = FALSE}
+data2 <- data %>%
+  filter(.$continent == c('Africa', 'Americas')) %>%
+  select(`Life expectancy`, continent)
+
+# Критерий Манна-Уитни-Уилкоксона для распределения ожидаемой продолжительности жизни в Америке и Африке
+data2_aremicas <- data2 %>%
+  filter(.$continent == 'Americas')
+data2_africa <- data2 %>%
+  filter(.$continent == 'Africa')
+
+stat.test <-  data2 %>%
+  wilcox_test(`Life expectancy` ~ continent) %>%
+  add_xy_position(x = "continent")
+  
+stat.test #p-value < 0.05, отвергаем нулевую гипотезу об отсутствии разницы средней продолжительности жизни в Африке и Америке - продолжительность жизни на этих континентах отличается
+
+ggboxplot(
+  data2, 
+  x = "continent", y = 'Life expectancy' , 
+  ylab = 'Life expectancy', xlab = "Continent", 
+  add = "jitter",
+  ) + 
+  labs(subtitle = get_test_label(stat.test, detailed = TRUE)) + 
+  stat_pvalue_manual(stat.test, tip.length = 0) 
+```
+
+# 4. Сделайте новый датафрейм, в котором оставите все численные колонки кроме Year. Сделайте корреляционный анализ этих данных. Постройте два любых типа графиков для визуализации корреляций.
+
+```{r, fig.width=9, message = FALSE}
+data3 <- data %>%
+  select(where(is.numeric), - Year)
+
+cor_data3 <- cor(data3)
+corrplot(cor_data3, method = "number", type = "lower", tl.cex = 0.5, number.cex = 0.5)
+
+ggpairs(data3,
+        title = 'Correlations in Life expectancy dataset',progress = F) +
+    theme_minimal() +
+    scale_fill_manual(values = c('#b9c3a2')) +
+    scale_colour_manual(values = c('#b9c3a2'))
+```
+
+# 5. Постройте иерархическую кластеризацию на этом датафрейме.
+```{r, message = FALSE}
+scaled_data3 <- scale(data3)
+
+scaled_dist <- dist(scaled_data3, 
+                      method = "euclidean")
+
+as.matrix(scaled_dist)[1:6,1:6]
+
+data_clear_hc <- hclust(d = scaled_dist, 
+                        method = "ward.D2")
+fviz_dend(data_clear_hc, 
+          cex = 0.1)
+```
+
+# 6. Сделайте одновременный график heatmap и иерархической кластеризации. Содержательно интерпретируйте результат.
+```{r}
+pheatmap(scaled_data3, 
+         show_rownames = FALSE, 
+         clustering_distance_rows = scaled_dist,
+         clustering_method = "ward.D2", 
+         cutree_rows = 5,
+         cutree_cols = length(colnames(scaled_data3)),
+         angle_col = 45, 
+         main = "Dendrograms for clustering rows and columns with heatmap")
+
+# С помощью кластеризации возможно разбить колонкина несколько групп, описательные признаки образуют 4 основные группы (4 региона). В одном из регионов имеет место сильная корреляция по столбцам GDP и GNI. Между собой связаны столбцы о безработице, количестве заболеваний туберкулезом, детской смертности, в другую группу входят столбцы по иммунизации, отдельная группа - количество мест в больницах и число суицидов. По первой группе есть корреляция по одному из регионов.
+```
+
+# 7. Проведите PCA анализ на этих данных. Проинтерпретируйте результат.
+```{r}
+data_pca <- prcomp(data3, scale = T)
+
+summary(data_pca)
+
+fviz_eig(data_pca, addlabels = T, ylim = c(0, 40))
+fviz_pca_var(data_pca, col.var = "contrib")
+fviz_pca_var(data_pca, select.var = list(contrib = 3), 
+             col.var = "contrib") # сильная корреляция переменной Life expectations с 1 компонентой
+fviz_contrib(data_pca, choice = "var", axes = 1, top = 24)
+fviz_contrib(data_pca, choice = "var", axes = 2, top = 24)
+fviz_contrib(data_pca, choice = "var", axes = 3, top = 24)
+#первые две компоненты объясняют 50% дисперсии компонент
+#большой вклад в анализируемые данные компоненты вносят переменные: Unemployment, suicide rate, tuberculosis treatment, hospital beds.
+#можно выделить группы: "Immunization", 1 четверть и граница 2 и 3 четверти.
+```
+
+# 8. Постройте biplot график для PCA. Раскрасьте его по значениям континентов. Переведите его в plotly. Желательно, чтобы при наведении на точку, вы могли видеть название страны.
+```{r}
+ggbiplot(data_pca, 
+         scale=0, alpha = 0.1) + 
+  theme_minimal()
+
+data_clear_with_ch <- data %>% 
+  select(-c(Country, Year, Gender))
+
+ggplotly(ggbiplot(data_pca, 
+         scale=0, 
+         groups = as.factor(data_clear_with_ch$continent), 
+         ellipse = T,
+         alpha = 0.2) +
+  theme_minimal())
+
+```
+
+# 9. Дайте содержательную интерпретацию PCA анализу.
+```{r}
+#Данные могу быть объяснены 3 переменными. Есть переменные, которые имеют отрицательную корреляцию. На графике выше видны выбросы, данные можно кластеризовать по континентам, но не очень эффективно. 
+```
+
+# 10. Сравните результаты отображения точек между алгоритмами PCA и UMAP.
+```{r}
+umap_prep <- recipe(~., data = data3) %>% 
+  step_normalize(all_predictors()) %>% 
+  step_umap(all_predictors()) %>%  
+  prep() %>%  
+  juice() 
+
+umap_prep %>%
+  ggplot(aes(UMAP1, UMAP2)) + 
+  geom_point(aes(color = as.character(data_clear_with_ch$continent)), 
+             alpha = 0.7, size = 2) +
+  labs(color = NULL)
+
+#есть сходства в результатах отображения точек: точки Африканского континета аггрегируются в правом нижнем с углу, как и в PCA, видна аггрегация точек Европейского континента (как и в PCA), нет сильных выбросов в UMAP. В UMAP точки находятся более плотно, лучше видны кластеры.
+```
